@@ -1,0 +1,165 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import ImageUploader from "@/components/ImageUploader";
+import Disclaimer from "@/components/Disclaimer";
+import { useAnalysis } from "@/components/AnalysisContext";
+import { checkModelAssets, fetchModelInfo, ModelUnavailableError } from "@/ml/model";
+import { analyseImage } from "@/ml/prediction";
+import { assessQuality, loadImageElement } from "@/ml/preprocessing";
+import type { QualityReport } from "@/ml/types";
+
+type ModelStatus = "checking" | "ready" | "unavailable";
+
+export default function ScreeningPage() {
+  const router = useRouter();
+  const { file, previewUrl, setFile, reset, setResult } = useAnalysis();
+  const [busy, setBusy] = useState(false);
+  const [stage, setStage] = useState("");
+  const [error, setError] = useState<{ title: string; text: string } | null>(null);
+  const [quality, setQuality] = useState<QualityReport | null>(null);
+  const [modelStatus, setModelStatus] = useState<ModelStatus>("checking");
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([fetchModelInfo(), checkModelAssets()]).then(([info, assetsPresent]) => {
+      if (!cancelled) setModelStatus(info && assetsPresent ? "ready" : "unavailable");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // basic quality check as soon as a photo is chosen
+  useEffect(() => {
+    let cancelled = false;
+    if (!previewUrl) return;
+    loadImageElement(previewUrl)
+      .then((img) => {
+        if (!cancelled) setQuality(assessQuality(img));
+      })
+      .catch(() => {
+        if (!cancelled) setError({ title: "Image problem", text: "This image could not be read. It may be corrupted. Please choose another photograph." });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [previewUrl]);
+
+  async function analyse() {
+    if (!previewUrl || !file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await analyseImage(previewUrl, setStage);
+      setResult(result);
+      router.push("/results");
+    } catch (e) {
+      if (e instanceof ModelUnavailableError) {
+        setModelStatus("unavailable");
+        setError({ title: "AI analysis is currently unavailable", text: e.message + " Please try again later." });
+      } else {
+        setError({ title: "The image could not be analysed", text: e instanceof Error ? e.message : "Unknown error. Please try another photograph." });
+      }
+      setBusy(false);
+    }
+  }
+
+  const blocked = !!quality?.blocking;
+
+  return (
+    <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
+      <h1 className="section-title">Skin image screening</h1>
+      <p className="mt-2 text-slate-600">Upload or capture a photograph of the affected skin area, then press “Analyse image”.</p>
+
+      {modelStatus === "unavailable" && (
+        <div role="alert" className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+          <strong>AI analysis is currently unavailable.</strong> The model metadata or one or more model weight files are missing, so no analysis can be performed. If you are the project owner, follow the model export steps in the README.
+        </div>
+      )}
+
+      <div className="mt-6 rounded-2xl border border-teal-200 bg-teal-50 p-4 text-sm text-teal-900">
+        <p className="font-semibold">Tips for a good photograph</p>
+        <p className="mt-1">Take a clear photograph in good lighting. Make sure the affected skin area is visible.</p>
+        <ul className="mt-2 list-disc space-y-1 pl-5">
+          <li>Use daylight or bright, even light – avoid harsh flash.</li>
+          <li>Hold the phone steady, about 15–30 cm from the skin, and let it focus.</li>
+          <li>Fill most of the frame with the skin area. Avoid showing your face or other people.</li>
+        </ul>
+      </div>
+
+      <section className="card mt-6" aria-label="Photograph upload">
+        {busy ? (
+          <div className="py-4 text-center" role="status" aria-live="polite">
+            {previewUrl && (
+              <div className="relative mx-auto h-56 w-56 overflow-hidden rounded-2xl border border-slate-200">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={previewUrl} alt="Photograph being analysed" className="h-full w-full object-cover" />
+                <div className="absolute inset-0">
+                  <div className="scan-line h-1 w-full bg-teal-400 shadow-[0_0_14px_3px_rgba(45,212,191,0.8)]" />
+                </div>
+              </div>
+            )}
+            <div className="mx-auto mt-5 h-8 w-8 animate-spin rounded-full border-4 border-teal-200 border-t-teal-700" />
+            <p className="mt-3 font-semibold text-slate-800">{stage || "Starting…"}</p>
+            <p className="mt-1 text-sm text-slate-500">The first analysis downloads the model (a few MB) and may take a little longer. Your photo stays on your device.</p>
+          </div>
+        ) : (
+          <>
+            <ImageUploader
+              previewUrl={previewUrl}
+              onSelect={(selectedFile) => {
+                setQuality(null);
+                setError(null);
+                setFile(selectedFile);
+              }}
+              onRemove={() => {
+                setQuality(null);
+                setError(null);
+                reset();
+              }}
+            />
+
+            {quality && quality.issues.length > 0 && (
+              <ul className="mt-4 space-y-2" aria-label="Photo quality notes">
+                {quality.issues.map((i) => (
+                  <li
+                    key={i.code}
+                    className={`rounded-xl border p-3 text-sm ${
+                      i.severity === "blocking" ? "border-rose-200 bg-rose-50 text-rose-800" : "border-amber-200 bg-amber-50 text-amber-900"
+                    }`}
+                  >
+                    {i.message}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {quality && quality.issues.length === 0 && (
+              <p className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+                Basic quality checks passed (brightness and sharpness look acceptable).
+              </p>
+            )}
+
+            {error && (
+              <div role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+                <p className="font-semibold">{error.title}</p>
+                <p className="mt-1">{error.text}</p>
+              </div>
+            )}
+
+            <button type="button" className="btn btn-primary mt-6 w-full" disabled={!file || blocked || modelStatus === "unavailable"} onClick={analyse}>
+              Analyse image
+            </button>
+            {!file && <p className="mt-2 text-center text-xs text-slate-500">Choose a photograph first to enable analysis.</p>}
+          </>
+        )}
+      </section>
+
+      <p className="mt-4 text-center text-sm text-slate-500">
+        Privacy: the photograph is processed only inside your browser. It is not uploaded, saved or shared.
+      </p>
+      <Disclaimer className="mt-6" />
+    </div>
+  );
+}

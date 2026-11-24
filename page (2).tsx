@@ -1,0 +1,71 @@
+"use client";
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useAnalysis } from "@/components/AnalysisContext";
+import ResultCard from "@/components/ResultCard";
+import Disclaimer from "@/components/Disclaimer";
+
+export default function ResultsPage() {
+  const router = useRouter();
+  const { result, previewUrl, reset } = useAnalysis();
+
+  if (!result || !previewUrl) {
+    return (
+      <div className="mx-auto max-w-xl px-4 py-16 text-center sm:px-6">
+        <h1 className="section-title">No result to show</h1>
+        <p className="mt-3 text-slate-600">
+          Results are kept only in memory for privacy, so they disappear when the page is reloaded. Please analyse a photograph first.
+        </p>
+        <Link href="/screening" className="btn btn-primary mt-6">
+          Start skin screening
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6">
+      <h1 className="section-title">Screening result</h1>
+      <p className="mt-2 text-slate-600">A preliminary, educational result from an academic AI model.</p>
+
+      <Disclaimer className="mt-6" />
+
+      <div className="mt-6 grid gap-6 md:grid-cols-5">
+        <div className="md:col-span-2">
+          <div className="card p-3 md:sticky md:top-24">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={previewUrl} alt="The photograph you uploaded" className="max-h-96 w-full rounded-xl object-contain" />
+            <p className="mt-2 text-center text-xs text-slate-500">Your photograph (not stored anywhere)</p>
+            <p className="mt-1 text-center text-xs text-slate-400">Analysed in {Math.round(result.inferenceMs)} ms on your device</p>
+          </div>
+        </div>
+        <div className="md:col-span-3">
+          <ResultCard result={result} />
+        </div>
+      </div>
+
+      <div className="mt-8 grid gap-3 sm:grid-cols-2">
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => {
+            reset();
+            router.push("/screening");
+          }}
+        >
+          Analyse another image
+        </button>
+        <Link
+          href="/"
+          className="btn btn-secondary"
+          onClick={() => {
+            reset();
+          }}
+        >
+          Return home
+        </Link>
+      </div>
+    </div>
+  );
+}
